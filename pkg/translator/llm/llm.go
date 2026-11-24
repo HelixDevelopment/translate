@@ -67,7 +67,11 @@ var ValidModels = map[Provider][]string{
 	ProviderGemini:      {"gemini-pro", "gemini-pro-vision", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro"},
 	ProviderMock:        {"mock"},
 	ProviderGroq:        {"llama-3.1-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768", "llama-3.3-70b-versatile", "gemma2-9b-it"},
-	ProviderCohere:      {"command-r", "command-r-plus", "command"},
+	// Current Cohere ids per the live /v1/models (verified 2026-11-24). The
+	// legacy ids stay accepted (§11.4.122) although Cohere no longer serves them.
+	ProviderCohere: {"command-r", "command-r-plus", "command",
+		"command-a-translate-08-2025", "command-a-03-2025", "command-r-08-2024",
+		"command-r-plus-08-2024", "command-r7b-12-2024", "north-small-translate-1.0"},
 	ProviderMistral:     {"mistral-large-latest", "mistral-medium-latest", "mistral-small-latest"},
 	ProviderXAI:         {"grok-beta", "grok-vision-beta"},
 	ProviderReplicate:   {"meta/llama-2-70b-chat", "mistralai/mixtral-8x7b-instruct-v0.1"},

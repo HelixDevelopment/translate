@@ -38,6 +38,74 @@ var envProviderSpecs = []envProviderSpec{
 	{EnvVar: "UPSTAGE_API_KEY", ID: "upstage", BaseURL: "https://api.upstage.ai/v1"},
 	// GEMINI exposes an OpenAI-compatible surface at the openai/ sub-path.
 	{EnvVar: "GEMINI_API_KEY", ID: "gemini", BaseURL: "https://generativelanguage.googleapis.com/v1beta/openai"},
+	// APPEND-ONLY below this line (numericProviderIndex maps by position).
+	// Cohere's documented OpenAI-compatibility surface; its native /v1/chat wire
+	// is NOT used. Before this entry `-provider cohere` could not even be
+	// bootstrapped (bridge saw no provider key) and the native whitelist held only
+	// models Cohere had removed.
+	{EnvVar: "COHERE_API_KEY", ID: "cohere", BaseURL: "https://api.cohere.com/compatibility/v1"},
+	// Mistral's dedicated Codestral endpoint (separate key from MISTRAL_API_KEY).
+	{EnvVar: "CODESTRAL_API_KEY", ID: "codestral", BaseURL: "https://codestral.mistral.ai/v1"},
+}
+
+// preferredModels lists, per provider, the model ids known (by a real translation
+// call, not by catalog listing) to be translation-capable. They serve two roles:
+// (1) discovery ordering — a provider's catalog is sorted alphabetically and then
+// capped, so for NVIDIA the first three entries are dead/non-chat models and the
+// provider never verified; preferred ids are moved to the front of the candidate
+// list; (2) the default for an explicit `-provider X` with no -model and no
+// verified model. A preferred id absent from the live catalog is NEVER injected
+// into discovery (no fabricated models, §11.4.123) — it only reorders.
+var preferredModels = map[string][]string{
+	"nvidia":    {"nvidia/riva-translate-4b-instruct-v2", "mistralai/mistral-large-4-1t-a52b"},
+	"cohere":    {"command-a-translate-08-2025", "command-r-plus-08-2024", "command-a-03-2025"},
+	"codestral": {"codestral-latest"},
+}
+
+// PreferredModelFor returns the first preferred translation model id for the
+// provider, or "" when none is recorded.
+func PreferredModelFor(providerID string) string {
+	if ms := preferredModels[providerID]; len(ms) > 0 {
+		return ms[0]
+	}
+	return ""
+}
+
+// EnvVarForProvider returns the API-key environment variable NAME (never a
+// value) for a provider id known to envProviderSpecs, or "".
+func EnvVarForProvider(providerID string) string {
+	if s, ok := providerByID[providerID]; ok {
+		return s.EnvVar
+	}
+	return ""
+}
+
+// orderCandidates returns models with the provider's preferred ids that are
+// present in the catalog moved to the front (preferred order), followed by the
+// rest in their original order. It never adds an id that is not in models.
+func orderCandidates(providerID string, models []string) []string {
+	pref := preferredModels[providerID]
+	if len(pref) == 0 {
+		return models
+	}
+	present := make(map[string]bool, len(models))
+	for _, m := range models {
+		present[m] = true
+	}
+	out := make([]string, 0, len(models))
+	used := make(map[string]bool, len(pref))
+	for _, p := range pref {
+		if present[p] {
+			out = append(out, p)
+			used[p] = true
+		}
+	}
+	for _, m := range models {
+		if !used[m] {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // ProvidersFromEnv builds a ProviderConfig for every OpenAI-compatible provider

@@ -103,6 +103,7 @@ func RunVerification(
 		pv.AuthPass = status != 0 && status != http.StatusUnauthorized && status != http.StatusForbidden
 
 		sort.Strings(models)
+		models = orderCandidates(provider.ID, models)
 		if opts.MaxModelsPerProvider > 0 && len(models) > opts.MaxModelsPerProvider {
 			models = models[:opts.MaxModelsPerProvider]
 		}

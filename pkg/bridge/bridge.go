@@ -82,6 +82,16 @@ type Options struct {
 	ForceVerify bool
 	// Getenv overrides the environment source (tests). Defaults to os.Getenv.
 	Getenv func(string) string
+	// SkipVerification opens a bridge WITHOUT provisioning or loading verified
+	// models (no provider-key requirement, no network, no SQLite store). It is for
+	// an explicit `-provider X` whose model is already known (-model given, or a
+	// recorded translation default), where ClientForProvider never consults the
+	// registry. Before this, a provider whose catalog cannot be probed
+	// (codestral has no /models route) or whose verification found nothing was
+	// unusable even with -provider + -model + a valid key, because Open failed with
+	// "no models met the verification threshold". Never used by the default
+	// (strongest-verified) path, which still hard-errors honestly.
+	SkipVerification bool
 }
 
 // Bridge is the facade. Construct with Open; it is safe for concurrent use.
@@ -125,6 +135,11 @@ func Open(ctx context.Context, opts Options) (*Bridge, error) {
 	})
 
 	b := &Bridge{factory: factory, resolver: resolver, cfg: cfg}
+
+	if opts.SkipVerification {
+		b.source = "unverified-explicit"
+		return b, nil
+	}
 
 	if apiURL != "" {
 		// HTTP mode: operator-provided running LLMsVerifier service.
@@ -473,6 +488,7 @@ var openAICompatibleProviders = map[string]bool{
 	"cerebras": true, "mistral": true, "together": true, "fireworks": true,
 	"nvidia": true, "sambanova": true, "hyperbolic": true, "novita": true,
 	"siliconflow": true, "zhipu": true, "upstage": true, "gemini": true,
+	"cohere": true, "codestral": true,
 }
 
 // strongestVerifiedModelFor returns the strongest VERIFIED model id for the given
@@ -518,6 +534,11 @@ func (b *Bridge) ClientForProvider(ctx context.Context, req ProviderRequest) (ll
 	modelID := strings.TrimSpace(req.Model)
 	if modelID == "" {
 		modelID = b.strongestVerifiedModelFor(ctx, providerID)
+	}
+	if modelID == "" {
+		// No -model and nothing verified for this provider: use the recorded
+		// translation-capable default (a real-call-proven id), if any.
+		modelID = verifier.PreferredModelFor(providerID)
 	}
 	if modelID == "" {
 		return nil, fmt.Errorf(

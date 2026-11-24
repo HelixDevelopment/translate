@@ -445,6 +445,12 @@ var bridgeOpener = func(ctx context.Context) (*bridge.Bridge, error) {
 	return bridge.Open(ctx, bridge.Options{})
 }
 
+// explicitBridgeOpener opens the bridge without verification (see
+// bridge.Options.SkipVerification). Seam for tests, like bridgeOpener.
+var explicitBridgeOpener = func(ctx context.Context) (*bridge.Bridge, error) {
+	return bridge.Open(ctx, bridge.Options{SkipVerification: true})
+}
+
 // bridgeTranslator opens the LLMsVerifier bridge and returns the strongest
 // verified translator for the run's language pair. It is the R-1/R2 default
 // source for unified-translator's API path: no local runtime, honest hard error
@@ -474,7 +480,15 @@ func bridgeTranslator(ctx context.Context, config *UnifiedConfig) (translator.Tr
 // hard-errors on misconfiguration — NEVER a silent switch to another provider or a
 // local runtime (§11.4.69).
 func providerTranslator(ctx context.Context, config *UnifiedConfig) (translator.Translator, error) {
-	b, err := bridgeOpener(ctx)
+	// When the model is already determined without the verified registry (-model
+	// given, or a recorded translation default for the provider) the bridge is
+	// opened WITHOUT a verification pass, so a provider whose catalog cannot be
+	// probed (codestral) or verified is still usable with its key.
+	open := bridgeOpener
+	if config.ModelExplicit || verifier.PreferredModelFor(config.Provider) != "" {
+		open = explicitBridgeOpener
+	}
+	b, err := open(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -567,6 +581,12 @@ func resolveProviderAPIKey(config *UnifiedConfig, providerID string) string {
 		"togetherai": "TOGETHER_API_KEY",
 	}
 	if envVar, ok := envMap[providerID]; ok {
+		return os.Getenv(envVar)
+	}
+	// Providers known to the verifier table (nvidia, cerebras, codestral, ...)
+	// but absent from the legacy map above: resolve from the single source of
+	// truth so -use-verifier does not report a key missing that IS set.
+	if envVar := verifier.EnvVarForProvider(providerID); envVar != "" {
 		return os.Getenv(envVar)
 	}
 	return ""
