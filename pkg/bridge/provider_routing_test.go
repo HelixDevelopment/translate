@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"digital.vasic.translator/internal/verifier"
@@ -193,4 +194,65 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// TestClientForProvider_CapacityGapProviders locks the engine-side gaps the i18n
+// provider survey found (2026-11-24): cohere and codestral could not be routed at
+// all, and nvidia (no verified model because discovery capped on dead models)
+// failed with "no verified model". A bare provider with NO verified model must
+// now pick its recorded translation model and the right base URL.
+func TestClientForProvider_CapacityGapProviders(t *testing.T) {
+	b := newTestBridge(keyForAll()) // nothing verified at all
+	for _, tc := range []struct{ id, model, host string }{
+		{"nvidia", "nvidia/riva-translate-4b-instruct-v2", "integrate.api.nvidia.com"},
+		{"cohere", "command-a-translate-08-2025", "api.cohere.com/compatibility/v1"},
+		{"codestral", "codestral-latest", "codestral.mistral.ai"},
+	} {
+		var gotModel, gotBase string
+		orig := clientBuild
+		clientBuild = func(m, id string, rp *verifier.ResolvedProvider) (llmClient, error) {
+			gotModel, gotBase = id, rp.BaseURL
+			return orig(m, id, rp)
+		}
+		_, err := b.ClientForProvider(context.Background(), ProviderRequest{ProviderID: tc.id})
+		clientBuild = orig
+		if err != nil {
+			t.Fatalf("%s: %v", tc.id, err)
+		}
+		if gotModel != tc.model || !containsSub(gotBase, tc.host) {
+			t.Errorf("%s: model=%q base=%q, want %q @ %q", tc.id, gotModel, gotBase, tc.model, tc.host)
+		}
+	}
+	// A provider with no recorded default still hard-errors (no guessing).
+	if _, err := b.ClientForProvider(context.Background(), ProviderRequest{ProviderID: "groq"}); err == nil {
+		t.Fatal("groq has no preferred model and nothing verified: want honest error")
+	}
+}
+
+// Open with SkipVerification must succeed with NO provider keys and NO store
+// (reproduced RED 2026-11-24: codestral + -model + valid key failed with "no
+// models met the verification threshold" because Open insisted on verifying).
+func TestOpen_SkipVerificationNeedsNoKeysNoStore(t *testing.T) {
+	dir := t.TempDir()
+	b, err := Open(context.Background(), Options{
+		SkipVerification: true,
+		DBPath:           dir + "/must-not-be-created/v.db",
+		Getenv:           func(k string) string { return map[string]string{"CODESTRAL_API_KEY": "k"}[k] },
+	})
+	if err != nil {
+		t.Fatalf("Open(SkipVerification) = %v", err)
+	}
+	if b.Source() != "unverified-explicit" {
+		t.Fatalf("source = %q", b.Source())
+	}
+	if _, serr := os.Stat(dir + "/must-not-be-created"); serr == nil {
+		t.Fatal("SkipVerification touched the verified-models store directory")
+	}
+	if _, err := b.ClientForProvider(context.Background(), ProviderRequest{ProviderID: "codestral", Model: "codestral-latest"}); err != nil {
+		t.Fatalf("explicit provider+model on a skip-verification bridge: %v", err)
+	}
+	// The strict default (no SkipVerification, no keys) still hard-errors.
+	if _, err := Open(context.Background(), Options{DBPath: dir + "/x/v.db", Getenv: func(string) string { return "" }}); err == nil {
+		t.Fatal("strict Open with no provider keys must still error")
+	}
 }
