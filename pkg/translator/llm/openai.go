@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -248,6 +249,14 @@ func (c *OpenAIClient) Translate(ctx context.Context, text string, prompt string
 		return "", fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
+	// A 200 whose body is not JSON at all (GitHub Models' gateway answers a chat
+	// request with text/plain `OK`) is not a chat-completions endpoint; say so
+	// with a typed error instead of a bare unmarshal failure.
+	if !json.Valid(body) {
+		return "", fmt.Errorf("%w: HTTP 200, content-type %q, body %q",
+			ErrNotChatEndpoint, resp.Header.Get("Content-Type"), truncateForError(string(body), 60))
+	}
+
 	var response OpenAIResponse
 	if err := json.Unmarshal(body, &response); err != nil {
 		return "", fmt.Errorf("failed to unmarshal response: %w", err)
@@ -257,5 +266,40 @@ func (c *OpenAIClient) Translate(ctx context.Context, text string, prompt string
 		return "", fmt.Errorf("no choices in response")
 	}
 
-	return string(response.Choices[0].Message.Content), nil
+	content := string(response.Choices[0].Message.Content)
+	if isPlaceholderReply(userMessage, content) {
+		return "", fmt.Errorf("%w: %q", ErrPlaceholderReply, truncateForError(content, 60))
+	}
+	return content, nil
+}
+
+// ErrNotChatEndpoint marks a 200 response that is not an OpenAI-compatible
+// chat-completions JSON document.
+var ErrNotChatEndpoint = errors.New("endpoint did not return a chat-completions document")
+
+// ErrPlaceholderReply marks a well-formed reply whose content is only an
+// acknowledgement ("OK", "Done", ...) for a request that asked for a translation.
+var ErrPlaceholderReply = errors.New("provider returned a placeholder acknowledgement instead of a translation")
+
+func truncateForError(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) > n {
+		return s[:n] + "..."
+	}
+	return s
+}
+
+// isPlaceholderReply reports whether reply is a bare acknowledgement while the
+// request was long enough that an acknowledgement cannot be its translation.
+// A genuinely tiny request (< 40 bytes, e.g. "OK" itself) is exempt.
+func isPlaceholderReply(userMessage, reply string) bool {
+	if len(strings.TrimSpace(userMessage)) < 40 {
+		return false
+	}
+	norm := strings.ToLower(strings.Trim(strings.TrimSpace(reply), " .!\t\r\n"))
+	switch norm {
+	case "ok", "okay", "done", "yes", "sure", "understood", "got it":
+		return true
+	}
+	return false
 }
