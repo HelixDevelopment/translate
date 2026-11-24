@@ -267,7 +267,7 @@ func (c *OpenAIClient) Translate(ctx context.Context, text string, prompt string
 	}
 
 	content := string(response.Choices[0].Message.Content)
-	if isPlaceholderReply(userMessage, content) {
+	if isPlaceholderReply(sourceOf(text, userMessage), content) {
 		return "", fmt.Errorf("%w: %q", ErrPlaceholderReply, truncateForError(content, 60))
 	}
 	return content, nil
@@ -289,17 +289,35 @@ func truncateForError(s string, n int) string {
 	return s
 }
 
-// isPlaceholderReply reports whether reply is a bare acknowledgement while the
-// request was long enough that an acknowledgement cannot be its translation.
-// A genuinely tiny request (< 40 bytes, e.g. "OK" itself) is exempt.
-func isPlaceholderReply(userMessage, reply string) bool {
-	if len(strings.TrimSpace(userMessage)) < 40 {
-		return false
+// sourceOf returns the translatable source: the first argument when present,
+// else the user message (callers that pass content only in the prompt).
+func sourceOf(text, userMessage string) string {
+	if strings.TrimSpace(text) != "" {
+		return text
 	}
-	norm := strings.ToLower(strings.Trim(strings.TrimSpace(reply), " .!\t\r\n"))
-	switch norm {
+	return userMessage
+}
+
+func normAck(s string) string {
+	return strings.ToLower(strings.Trim(strings.TrimSpace(s), " .!\t\r\n"))
+}
+
+func isAckWord(s string) bool {
+	switch normAck(s) {
 	case "ok", "okay", "done", "yes", "sure", "understood", "got it":
 		return true
 	}
 	return false
+}
+
+// isPlaceholderReply reports whether reply is a bare acknowledgement for a
+// SOURCE long enough (>= 20 bytes) that an acknowledgement cannot be its
+// translation. Short sources (a one-word line "Да." -> "Yes.", "Готово" -> "Done")
+// and sources that are themselves acknowledgements are exempt: literary text has
+// them and the translation legitimately is one.
+func isPlaceholderReply(source, reply string) bool {
+	if len(strings.TrimSpace(source)) < 20 || isAckWord(source) {
+		return false
+	}
+	return isAckWord(reply)
 }

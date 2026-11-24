@@ -31,14 +31,14 @@ const junkPrompt = "Translate the following text from English to German, preserv
 // surfaced as a JSON-unmarshal accident and never stored as a translation.
 func TestOpenAIClient_NonJSON200IsTypedError(t *testing.T) {
 	c := junkServer(t, "text/plain", "OK")
-	out, err := c.Translate(context.Background(), "Hello", junkPrompt)
+	out, err := c.Translate(context.Background(), "Hello, how are you today, my friend?", junkPrompt)
 	if out != "" || !errors.Is(err, ErrNotChatEndpoint) {
 		t.Fatalf("out=%q err=%v, want ErrNotChatEndpoint", out, err)
 	}
 	if isTextSizeError(err) {
 		t.Fatalf("junk-endpoint error must not trigger the size-retry splitter: %v", err)
 	}
-	if strings.Contains(err.Error(), "k\n") {
+	if strings.Contains(err.Error(), "Hello, how are you") || strings.Contains(err.Error(), "Bearer") {
 		t.Fatal("error leaks request material")
 	}
 }
@@ -48,7 +48,7 @@ func TestOpenAIClient_NonJSON200IsTypedError(t *testing.T) {
 func TestOpenAIClient_PlaceholderReplyIsTypedError(t *testing.T) {
 	for _, reply := range []string{"OK", "ok.", " Okay! ", "Done", "Understood"} {
 		c := junkServer(t, "application/json", `{"choices":[{"message":{"role":"assistant","content":"`+reply+`"}}]}`)
-		out, err := c.Translate(context.Background(), "Hello", junkPrompt)
+		out, err := c.Translate(context.Background(), "Hello, how are you today, my friend?", junkPrompt)
 		if out != "" || !errors.Is(err, ErrPlaceholderReply) {
 			t.Fatalf("reply %q: out=%q err=%v, want ErrPlaceholderReply", reply, out, err)
 		}
@@ -63,8 +63,11 @@ func TestOpenAIClient_RealReplyUnaffected(t *testing.T) {
 	if err != nil || out != "Hallo, wie geht es dir heute?" {
 		t.Fatalf("out=%q err=%v", out, err)
 	}
-	c2 := junkServer(t, "application/json", `{"choices":[{"message":{"role":"assistant","content":"OK"}}]}`)
-	if out, err := c2.Translate(context.Background(), "OK", "OK"); err != nil || out != "OK" {
-		t.Fatalf("short source OK->OK was wrongly rejected: out=%q err=%v", out, err)
+	// Realistic production shape: SHORT source wrapped in a LONG prompt.
+	for src, want := range map[string]string{"OK": "OK", "Да.": "Yes.", "Готово": "Done", "Хорошо": "Okay"} {
+		c2 := junkServer(t, "application/json", `{"choices":[{"message":{"role":"assistant","content":"`+want+`"}}]}`)
+		if out, err := c2.Translate(context.Background(), src, junkPrompt); err != nil || out != want {
+			t.Fatalf("short source %q -> %q wrongly rejected: out=%q err=%v", src, want, out, err)
+		}
 	}
 }
