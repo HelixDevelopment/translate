@@ -529,6 +529,11 @@ func (b *Bridge) ClientForProvider(ctx context.Context, req ProviderRequest) (ll
 		return nil, fmt.Errorf("bridge: explicit provider request has empty provider id")
 	}
 
+	// Opt-in local provider: explicit only, loopback-validated, no key, no registry.
+	if IsLocalProvider(providerID) {
+		return localClient(req, osGetenv)
+	}
+
 	// Resolve the model: explicit -model wins; else the strongest verified model
 	// for THIS provider; else an honest error (never a cross-provider switch).
 	modelID := strings.TrimSpace(req.Model)

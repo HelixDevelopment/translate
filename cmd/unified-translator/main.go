@@ -485,7 +485,7 @@ func providerTranslator(ctx context.Context, config *UnifiedConfig) (translator.
 	// opened WITHOUT a verification pass, so a provider whose catalog cannot be
 	// probed (codestral) or verified is still usable with its key.
 	open := bridgeOpener
-	if config.ModelExplicit || verifier.PreferredModelFor(config.Provider) != "" {
+	if config.ModelExplicit || bridge.IsLocalProvider(config.Provider) || verifier.PreferredModelFor(config.Provider) != "" {
 		open = explicitBridgeOpener
 	}
 	b, err := open(ctx)
